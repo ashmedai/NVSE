@@ -1,5 +1,7 @@
 #include "SafeWrite.h"
 #include "Hooks_SaveLoad.h"
+#include "PluginAPI.h"
+#include "PluginManager.h"
 //#include "Serialization.h"
 
 #if RUNTIME
@@ -33,6 +35,9 @@ static void __stdcall DoLoadGameHook(const char* saveFilePath)
 	g_gameLoaded = true;
 
 	_MESSAGE("DoLoadGameHook: %s", saveFilePath);
+	//no serialization support, just events, call the plugin mgr directly
+	//to dispatch the notification
+    PluginManager::Dispatch_Message(0, NVSEMessagingInterface::kMessage_LoadGame, (void*)saveFilePath, strlen(saveFilePath), NULL);
 //	Serialization::HandleLoadGame(saveFilePath);
 }
 
