@@ -24,6 +24,11 @@ public:
 	static void			SetOpcodeBase(UInt32 opcode);
 	static void *		QueryInterface(UInt32 id);
 	static PluginHandle	GetPluginHandle(void);
+	PluginHandle	LookupHandleFromName(const char* pluginName);
+	const char *	GetPluginNameFromHandle(PluginHandle handle);
+
+	static bool Dispatch_Message(PluginHandle sender, UInt32 messageType, void * data, UInt32 dataLen, const char* receiver);
+	static bool	RegisterListener(PluginHandle listener, const char* sender, NVSEMessagingInterface::EventCallback handler);
 
 private:
 	struct LoadedPlugin

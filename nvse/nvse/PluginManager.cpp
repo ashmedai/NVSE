@@ -45,6 +45,13 @@ static const NVSEConsoleInterface g_NVSEConsoleInterface =
 };
 #endif
 
+static NVSEMessagingInterface g_NVSEMessagingInterface =
+{
+	NVSEMessagingInterface::kVersion,
+	PluginManager::RegisterListener,
+	PluginManager::Dispatch_Message
+};
+
 PluginManager::PluginManager()
 {
 	//
@@ -204,10 +211,9 @@ void PluginManager::SetOpcodeBase(UInt32 opcode)
 void * PluginManager::QueryInterface(UInt32 id)
 {
 	void	* result = NULL;
-
-#ifdef RUNTIME
 	switch(id)
 	{
+#ifdef RUNTIME
 	case kInterface_Serialization:
 //		result = (void *)&g_NVSESerializationInterface;
 		break;
@@ -216,13 +222,14 @@ void * PluginManager::QueryInterface(UInt32 id)
 		result = (void *)&g_NVSEConsoleInterface;
 		break;
 
+#endif
+	case kInterface_Messaging:
+		result = (void *)&g_NVSEMessagingInterface;
+		break;
 	default:
 		_WARNING("unknown QueryInterface %08X", id);
 		break;
 	}
-#else
-	_WARNING("unknown QueryInterface %08X", id);
-#endif
 
 	return result;
 }
@@ -437,6 +444,167 @@ const char * PluginManager::CheckPluginCompatibility(LoadedPlugin * plugin)
 
 	return NULL;
 }
+
+// Plugin communication interface
+struct PluginListener {
+	PluginHandle	listener;
+	NVSEMessagingInterface::EventCallback	handleMessage;
+};
+
+typedef std::vector<std::vector<PluginListener> > PluginListeners;
+static PluginListeners s_pluginListeners;
+
+bool PluginManager::RegisterListener(PluginHandle listener, const char* sender, NVSEMessagingInterface::EventCallback handler)
+{
+	_MESSAGE("register plugin listener for %s", sender);
+	// because this can be called while plugins are loading, gotta make sure number of plugins hasn't increased
+	UInt32 numPlugins = g_pluginManager.GetNumPlugins() + 1;
+	if (s_pluginListeners.size() < numPlugins)
+	{
+		s_pluginListeners.resize(numPlugins + 5);	// add some extra room to avoid unnecessary re-alloc
+	}
+
+	// handle > num plugins = invalid
+	if (listener > g_pluginManager.GetNumPlugins() || !handler) 
+	{
+		return false;
+	}
+
+	if (sender)
+	{
+		// is target loaded?
+		PluginHandle target = g_pluginManager.LookupHandleFromName(sender);
+		if (target == kPluginHandle_Invalid)
+		{
+			return false;
+		}
+		// is listener already registered?
+		for (std::vector<PluginListener>::iterator iter = s_pluginListeners[target].begin(); iter != s_pluginListeners[target].end(); ++iter)
+		{
+			if (iter->listener == listener)
+			{
+				return true;
+			}
+		}
+
+		// register new listener
+		PluginListener newListener;
+		newListener.handleMessage = handler;
+		newListener.listener = listener;
+
+		s_pluginListeners[target].push_back(newListener);
+	} else{
+		// register listener to every loaded plugin
+		UInt32 idx = 0;
+		for(PluginListeners::iterator iter = s_pluginListeners.begin(); iter != s_pluginListeners.end(); ++iter)
+		{
+			// don't add the listener to its own list
+			if (idx && idx != listener)
+			{
+				bool skipCurrentList = false;
+				for (std::vector<PluginListener>::iterator iterEx = iter->begin(); iterEx != iter->end(); ++iterEx)
+				{
+					// already registered with this plugin, skip it
+					if (iterEx->listener == listener)
+					{
+						skipCurrentList = true;
+						break;
+					}
+				}
+				if (skipCurrentList)
+				{
+					continue;
+				}
+				PluginListener newListener;
+				newListener.handleMessage = handler;
+				newListener.listener = listener;
+
+				iter->push_back(newListener);
+			}
+			idx++;
+		}
+	}
+
+	return true;
+}
+
+bool PluginManager::Dispatch_Message(PluginHandle sender, UInt32 messageType, void * data, UInt32 dataLen, const char* receiver)
+{
+	_MESSAGE("dispatch message to plugin listeners");
+	UInt32 numRespondents = 0;
+	PluginHandle target = kPluginHandle_Invalid;
+
+	if (!s_pluginListeners.size())	// no listeners yet registered
+	{
+	    _MESSAGE("no listeners registered");
+		return false;
+	}
+	else if (sender >= s_pluginListeners.size())
+	{
+	    _MESSAGE("sender is not in the list");
+		return false;
+	}
+
+	if (receiver)
+	{
+		target = g_pluginManager.LookupHandleFromName(receiver);
+		if (target == kPluginHandle_Invalid)
+			return false;
+	}
+
+	const char* senderName = g_pluginManager.GetPluginNameFromHandle(sender);
+	if (!senderName)
+		return false;
+	for (std::vector<PluginListener>::iterator iter = s_pluginListeners[sender].begin(); iter != s_pluginListeners[sender].end(); ++iter)
+	{
+		NVSEMessagingInterface::Message msg;
+		msg.data = data;
+		msg.type = messageType;
+		msg.sender = senderName;
+		msg.dataLen = dataLen;
+
+		if (target != kPluginHandle_Invalid)	// sending message to specific plugin
+		{
+			if (iter->listener == target)
+			{
+				iter->handleMessage(&msg);
+				return true;
+			}
+		} else {
+			iter->handleMessage(&msg);
+			numRespondents++;
+		}
+	}
+	return numRespondents ? true : false;
+}
+
+PluginHandle PluginManager::LookupHandleFromName(const char* pluginName)
+{
+	if (!_stricmp("NVSE", pluginName))
+		return 0;
+
+	UInt32	idx = 1;
+	for(LoadedPluginList::iterator iter = m_plugins.begin(); iter != m_plugins.end(); ++iter)
+	{
+		LoadedPlugin	* plugin = &(*iter);
+		if(!_stricmp(plugin->info.name, pluginName))
+		{
+			return idx;
+		}
+		idx++;
+	}
+}
+
+const char * PluginManager::GetPluginNameFromHandle(PluginHandle handle)
+{
+	if (handle > 0 && handle <= m_plugins.size())
+		return (m_plugins[handle - 1].info.name);
+	else if (handle == 0)
+		return "NVSE";
+
+	return NULL;
+}
+
 
 #ifdef RUNTIME
 
