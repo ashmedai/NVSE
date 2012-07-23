@@ -58,7 +58,8 @@ static __declspec(naked) void LoadGameHook(void)
 
 static void __stdcall DoSaveGameHook(const char* saveFilePath)
 {
-	_MESSAGE("DoSaveGameHook: %s", saveFilePath);
+	_MESSAGE("NVSE DLL DoSaveGameHook: %s", saveFilePath);
+	PluginManager::Dispatch_Message(0, NVSEMessagingInterface::kMessage_SaveGame, (void*)saveFilePath, strlen(saveFilePath), NULL);
 //	Serialization::HandleSaveGame(saveFilePath);
 }
 
@@ -108,8 +109,8 @@ void Hook_SaveLoad_Init(void)
 {
 	WriteRelJump(kLoadGamePatchAddr, (UInt32)&LoadGameHook);
 
-#if _DEBUG
 	WriteRelJump(kSaveGamePatchAddr, (UInt32)&SaveGameHook);
+#if _DEBUG
 //	WriteRelCall(kNewGamePatchAddr, (UInt32)&NewGameHook);
 //	WriteRelCall(kDeleteGamePatchAddr, (UInt32)&DeleteGameHook);
 //	SafeWrite8(kDeleteGamePatchAddr + 5, 0x90);		// nop out leftover byte from original instruction
